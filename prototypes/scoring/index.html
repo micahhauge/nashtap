@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NashTap Scoring Prototype</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root { --bg:#fafaf9; --fg:#1c1917; --muted:#78716c; --line:#e7e5e4; --card:#fff; --accent:#c2410c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141210; --fg:#f5f5f4; --muted:#a8a29e; --line:#2e2a27; --card:#1d1a17; --accent:#fb923c; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system, system-ui, sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .tag { display:inline-block; font-size:11px; font-weight:600; letter-spacing:.05em; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:1px 6px; margin-left:6px; vertical-align:middle; }
+  .intro { color:var(--muted); margin:0 0 12px; }
+  .tabs { display:flex; gap:4px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin-bottom:12px; }
+  .tabs button { background:none; border:none; padding:8px 12px; color:var(--muted); font:inherit; cursor:pointer; border-bottom:2px solid transparent; }
+  .tabs button.on { color:var(--fg); border-bottom-color:var(--accent); font-weight:600; }
+  .grid { display:grid; grid-template-columns: 1.3fr 1fr; gap:16px; }
+  @media (max-width:820px){ .grid { grid-template-columns:1fr; } }
+  #map { height:60vh; min-height:340px; border-radius:8px; border:1px solid var(--line); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+  .card h3 { margin:0 0 8px; font-size:15px; }
+  .muted { color:var(--muted); }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
+  button.act, select { font:inherit; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; }
+  button.act.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.act:disabled { opacity:.4; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0; }
+  label.s { display:block; font-size:13px; margin:6px 0; }
+  label.s input[type=range] { width:100%; }
+  pre.share { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; white-space:pre-wrap; margin:6px 0; font:14px/1.4 ui-monospace, monospace; }
+  .changed { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .steps button { display:block; width:100%; text-align:left; margin:6px 0; }
+  .hidden { display:none; }
+  .big { font-size:28px; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>NashTap scoring <span class="tag">PROTOTYPE, THROWAWAY</span></h1>
+  <p class="intro"><b>Question:</b> How should a tap turn into points? Which <b>distance-to-points curve</b> feels fair across the whole Play Area? For a Location that covers an area (a park, lake or town), should distance be measured to the <b>edge</b> (any tap inside is perfect) or to the <b>center</b>? And what should the <b>Share Text</b> look like? Outlines come from OpenStreetMap and are rough. Fun Facts are placeholders.</p>
+
+  <div class="tabs" id="tabs">
+    <button data-tab="free" class="on">Free play</button>
+    <button data-tab="walk">Walkthroughs</button>
+    <button data-tab="daily">Sample Daily Challenge</button>
+    <button data-tab="tune">Tune the curves</button>
+  </div>
+
+  <div class="grid">
+    <div><div id="map"></div><p class="muted" style="font-size:12px;margin:4px 0">Imagery © Esri World Imagery (for the prototype only). Tap the map to guess.</p></div>
+    <div>
+      <!-- FREE PLAY -->
+      <div data-panel="free">
+        <div class="card">
+          <h3>Pick a Location, then tap where you think it is</h3>
+          <div class="row"><select id="locSelect"></select><button class="act" id="retry">Clear tap</button></div>
+          <p class="muted" id="freeHint">The answer stays hidden until you tap.</p>
+        </div>
+        <div class="card" id="freeResult"></div>
+      </div>
+
+      <!-- WALKTHROUGHS -->
+      <div data-panel="walk" class="hidden">
+        <div class="card">
+          <div class="row" id="walkTabs"></div>
+          <p id="walkDesc"></p>
+          <div class="steps" id="walkSteps"></div>
+        </div>
+        <div class="card" id="walkResult"></div>
+      </div>
+
+      <!-- DAILY -->
+      <div data-panel="daily" class="hidden">
+        <div class="card">
+          <h3>Rules for this run</h3>
+          <div class="row">Curve: <select id="dCurve"></select></div>
+          <div class="row">Area Locations measured to: <select id="dRule"><option value="edge">Edge (tap inside = perfect)</option><option value="center">Center</option></select></div>
+          <label class="row"><input type="checkbox" id="dHard"> The Hard round counts 1.5× (max 550)</label>
+          <div class="row"><button class="act primary" id="dStart">Start the sample Daily Challenge</button></div>
+        </div>
+        <div class="card" id="dailyPanel"><span class="muted">Five Locations: 2 Easy, 2 Medium, 1 Hard, easiest first.</span></div>
+      </div>
+
+      <!-- TUNE -->
+      <div data-panel="tune" class="hidden">
+        <div class="card">
+          <h3>Curve settings</h3>
+          <label class="s">Straight line: reaches 0 points at <b id="vLin"></b> mi<input type="range" id="pLin" min="5" max="60" step="1"></label>
+          <label class="s">Steady falloff: loses about two thirds of the points every <b id="vExp"></b> mi<input type="range" id="pExp" min="0.5" max="10" step="0.5"></label>
+          <label class="s">Bullseye: perfect within <b id="vBr"></b> mi<input type="range" id="pBr" min="0" max="1" step="0.05"></label>
+          <label class="s">Bullseye: then loses about two thirds every <b id="vBk"></b> mi<input type="range" id="pBk" min="0.5" max="10" step="0.5"></label>
+        </div>
+        <div class="card"><h3>Points by distance</h3><div id="refTable"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== Pure scoring module (no DOM). Could be lifted into the real codebase. =====
+const Scoring = (() => {
+  const R_MI = 3958.8;
+  const rad = d => d * Math.PI / 180;
+  function haversineMi(a, b) {
+    const dLat = rad(b[1] - a[1]), dLng = rad(b[0] - a[0]);
+    const h = Math.sin(dLat/2)**2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dLng/2)**2;
+    return 2 * R_MI * Math.asin(Math.sqrt(h));
+  }
+  function centroid(ring) {
+    const pts = ring.slice(0, -1);
+    return [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
+  }
+  function pointInPolygon(pt, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  // Nearest point on the ring's edge, using a local flat projection (fine at Play Area scale).
+  function nearestOnEdge(pt, ring) {
+    const k = Math.cos(rad(pt[1]));
+    const toXY = p => [p[0] * k, p[1]], fromXY = q => [q[0] / k, q[1]];
+    const p = toXY(pt);
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < ring.length - 1; i++) {
+      const a = toXY(ring[i]), b = toXY(ring[i + 1]);
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx*dx + dy*dy || 1)));
+      const q = [a[0] + t * dx, a[1] + t * dy];
+      const d = (q[0] - p[0])**2 + (q[1] - p[1])**2;
+      if (d < bestD) { bestD = d; best = fromXY(q); }
+    }
+    return best;
+  }
+  // rule: "edge" (inside = 0, else to nearest edge) or "center" (always to the center)
+  function measure(tap, loc, rule) {
+    if (loc.point) return { miles: haversineMi(tap, loc.point), to: loc.point, inside: false };
+    if (rule === 'center') { const c = centroid(loc.polygon); return { miles: haversineMi(tap, c), to: c, inside: pointInPolygon(tap, loc.polygon) }; }
+    if (pointInPolygon(tap, loc.polygon)) return { miles: 0, to: tap, inside: true };
+    const q = nearestOnEdge(tap, loc.polygon);
+    return { miles: haversineMi(tap, q), to: q, inside: false };
+  }
+  const CURVES = {
+    linear:   { label: 'Straight line', fn: (d, p) => 100 * Math.max(0, 1 - d / p.linZero) },
+    exp:      { label: 'Steady falloff', fn: (d, p) => 100 * Math.exp(-d / p.expK) },
+    bullseye: { label: 'Bullseye + falloff', fn: (d, p) => d <= p.bullR ? 100 : 100 * Math.exp(-(d - p.bullR) / p.bullK) },
+  };
+  const points = (miles, curve, params) => Math.round(CURVES[curve].fn(miles, params));
+  const emoji = pts => pts >= 90 ? '🟩' : pts >= 60 ? '🟨' : pts >= 30 ? '🟧' : '🟥';
+  function shareText(format, n, rounds, total, max) {
+    const pts = rounds.map(r => r.points);
+    if (format === 'emoji') return `NashTap #${n} · ${total}/${max}\n${pts.map(emoji).join('')}\nnashtap.com`;
+    if (format === 'numbers') return `NashTap #${n} 🎸 ${total}/${max}\n${pts.join(' · ')}\nnashtap.com`;
+    return `NashTap #${n}: ${total}/${max}\n${pts.map(p => emoji(p) + p).join(' ')}\nnashtap.com`;
+  }
+  return { haversineMi, centroid, pointInPolygon, measure, CURVES, points, emoji, shareText };
+})();
+
+// ===== Page shell (throwaway) =====
+const LOCS = [{"id":"ryman","name":"Ryman Auditorium","kind":"Landmark","difficulty":"Easy","point":[-86.7785,36.16125]},{"id":"centennial","name":"Centennial Park","kind":"Park","difficulty":"Easy","polygon":[[-86.81775,36.14994],[-86.81148,36.14566],[-86.80873,36.14708],[-86.81242,36.15403],[-86.81775,36.14994]]},{"id":"radnor","name":"Radnor Lake","kind":"Nature","difficulty":"Medium","polygon":[[-86.80813,36.06068],[-86.79889,36.05674],[-86.79712,36.05685],[-86.7969,36.05701],[-86.80086,36.06023],[-86.79989,36.06353],[-86.80414,36.06218],[-86.80419,36.06366],[-86.80696,36.06358],[-86.80813,36.06068]]},{"id":"nolensville","name":"Nolensville","kind":"Town","difficulty":"Medium","polygon":[[-86.68195,35.96993],[-86.68017,35.96868],[-86.67946,35.96409],[-86.67539,35.96087],[-86.67479,35.95801],[-86.67243,35.95689],[-86.67369,35.94804],[-86.67593,35.94298],[-86.67539,35.94046],[-86.65278,35.93685],[-86.65264,35.93568],[-86.65179,35.93673],[-86.64934,35.93635],[-86.64879,35.93871],[-86.64346,35.93719],[-86.64384,35.93524],[-86.63911,35.93622],[-86.63695,35.93533],[-86.6368,35.93648],[-86.63847,35.9367],[-86.63792,35.94138],[-86.64921,35.94454],[-86.65419,35.94731],[-86.65021,35.95142],[-86.64852,35.96004],[-86.65266,35.96042],[-86.65282,35.9726],[-86.65466,35.9728],[-86.65539,35.968],[-86.67124,35.96964],[-86.67063,35.97276],[-86.67834,35.97425],[-86.67839,35.97135],[-86.68121,35.97144],[-86.68195,35.96993]]},{"id":"nippers","name":"Nippers Corner","kind":"Crossroads","difficulty":"Hard","polygon":[[-86.74762,36.03992],[-86.74622,36.03853],[-86.74146,36.03782],[-86.73994,36.04132],[-86.74396,36.04167],[-86.74559,36.04318],[-86.74762,36.03992]]},{"id":"crockett","name":"Crockett Park","kind":"Park","difficulty":"Medium","polygon":[[-86.77702,35.985],[-86.77531,35.97937],[-86.76827,35.98071],[-86.76806,35.97688],[-86.76491,35.97655],[-86.76384,35.98258],[-86.76259,35.98347],[-86.76405,35.98277],[-86.77093,35.98555],[-86.77702,35.985]]},{"id":"hattie","name":"Hattie B's (original)","kind":"Institution","difficulty":"Medium","point":[-86.79662,36.15149]},{"id":"lenox","name":"Lenox Village","kind":"Neighborhood","difficulty":"Hard","polygon":[[-86.71287,36.02562],[-86.71122,36.02571],[-86.70932,36.02237],[-86.7109,36.021],[-86.70893,36.02215],[-86.70396,36.01784],[-86.70219,36.0183],[-86.70093,36.01678],[-86.69936,36.01749],[-86.7011,36.02349],[-86.70669,36.02326],[-86.70737,36.02469],[-86.70554,36.02628],[-86.70875,36.0259],[-86.70947,36.02771],[-86.71255,36.02775],[-86.71287,36.02562]]},{"id":"factory","name":"The Factory at Franklin","kind":"Institution","difficulty":"Medium","polygon":[[-86.85915,35.93262],[-86.85883,35.93193],[-86.85854,35.93233],[-86.85915,35.93262]]}];
+const byId = Object.fromEntries(LOCS.map(l => [l.id, l]));
+const params = { linZero: 25, expK: 3, bullR: 0.25, bullK: 3 };
+const PLAY_AREA = [[-87.55, 35.45], [-86.05, 36.68]];
+const fmtMi = m => m < 0.1 ? `${Math.round(m * 5280)} ft` : `${m.toFixed(m < 10 ? 2 : 1)} mi`;
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: { version: 8, sources: { sat: { type: 'raster', tileSize: 256, maxzoom: 19,
+    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'] } },
+    layers: [{ id: 'sat', type: 'raster', source: 'sat' }] },
+  bounds: PLAY_AREA, maxBounds: [[-88.2, 35.1], [-85.4, 37.0]], attributionControl: false,
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
+const empty = { type: 'FeatureCollection', features: [] };
+map.on('load', () => {
+  for (const s of ['target', 'tap', 'line']) map.addSource(s, { type: 'geojson', data: empty });
+  map.addLayer({ id: 'tfill', type: 'fill', source: 'target', filter: ['==', '$type', 'Polygon'], paint: { 'fill-color': '#facc15', 'fill-opacity': .25 } });
+  map.addLayer({ id: 'tline', type: 'line', source: 'target', filter: ['==', '$type', 'Polygon'], paint: { 'line-color': '#facc15', 'line-width': 2 } });
+  map.addLayer({ id: 'tpt', type: 'circle', source: 'target', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 7, 'circle-color': '#facc15', 'circle-stroke-color': '#000', 'circle-stroke-width': 1.5 } });
+  map.addLayer({ id: 'line', type: 'line', source: 'line', paint: { 'line-color': '#fff', 'line-width': 2, 'line-dasharray': [2, 2] } });
+  map.addLayer({ id: 'tap', type: 'circle', source: 'tap', paint: { 'circle-radius': 7, 'circle-color': '#ef4444', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+});
+function locFeature(loc) {
+  return { type: 'Feature', geometry: loc.point ? { type: 'Point', coordinates: loc.point } : { type: 'Polygon', coordinates: [loc.polygon] } };
+}
+function clearMap() { for (const s of ['target', 'tap', 'line']) map.getSource(s)?.setData(empty); }
+function drawReveal(loc, tap, to) {
+  map.getSource('target').setData({ type: 'FeatureCollection', features: [locFeature(loc)] });
+  map.getSource('tap').setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: tap } }] });
+  map.getSource('line').setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: [tap, to] } }] });
+  const pts = [tap, to, ...(loc.polygon || [loc.point])];
+  const lng = pts.map(p => p[0]), lat = pts.map(p => p[1]);
+  map.fitBounds([[Math.min(...lng), Math.min(...lat)], [Math.max(...lng), Math.max(...lat)]], { padding: 60, maxZoom: 15, duration: 600 });
+}
+function resetView() { map.fitBounds(PLAY_AREA, { duration: 400 }); }
+
+// Comparison table: every curve × every area rule, for one tap.
+function comparison(loc, tap) {
+  const rules = loc.point ? [['edge', 'Point']] : [['edge', 'Edge rule'], ['center', 'Center rule']];
+  const m = Object.fromEntries(rules.map(([r]) => [r, Scoring.measure(tap, loc, r)]));
+  let h = `<h3>${loc.name} <span class="muted">· ${loc.kind} · ${loc.difficulty}</span></h3>`;
+  h += `<p class="muted" style="margin:0 0 6px">Fun Fact: <i>(placeholder, written by the curator)</i></p>`;
+  if (!loc.point) h += `<p style="margin:0 0 6px">Tap is <b>${m.edge.inside ? 'inside' : 'outside'}</b> the area.</p>`;
+  h += `<table><tr><th></th>${rules.map(([, l]) => `<th class="n">${l}</th>`).join('')}</tr>`;
+  h += `<tr><td>Distance</td>${rules.map(([r]) => `<td class="n">${fmtMi(m[r].miles)}</td>`).join('')}</tr>`;
+  for (const [id, c] of Object.entries(Scoring.CURVES)) {
+    h += `<tr><td>${c.label}</td>${rules.map(([r]) => { const p = Scoring.points(m[r].miles, id, params); return `<td class="n">${Scoring.emoji(p)} ${p}</td>`; }).join('')}</tr>`;
+  }
+  return { html: h + '</table>', to: m.edge.to };
+}
+
+// ----- Tabs -----
+let mode = 'free';
+document.getElementById('tabs').onclick = e => {
+  const t = e.target.dataset.tab; if (!t) return;
+  mode = t;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('[data-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== t));
+  clearMap(); resetView();
+  if (t === 'walk') showWalk(0);
+};
+
+// ----- Free play -----
+const sel = document.getElementById('locSelect');
+sel.innerHTML = LOCS.map(l => `<option value="${l.id}">${l.name} (${l.kind}, ${l.difficulty})</option>`).join('');
+const freeResult = document.getElementById('freeResult');
+freeResult.innerHTML = '<span class="muted">No tap yet.</span>';
+let freeTap = null;
+function renderFree() {
+  const loc = byId[sel.value];
+  if (!freeTap) { freeResult.innerHTML = '<span class="muted">No tap yet.</span>'; clearMap(); return; }
+  const c = comparison(loc, freeTap); freeResult.innerHTML = c.html; drawReveal(loc, freeTap, c.to);
+}
+sel.onchange = () => { freeTap = null; renderFree(); resetView(); };
+document.getElementById('retry').onclick = () => { freeTap = null; renderFree(); resetView(); };
+
+// ----- Walkthroughs -----
+const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+const WALKS = [
+  { title: 'Near miss on a landmark', loc: 'ryman', tap: () => [-86.7745, 36.1585],
+    desc: 'The Ryman is a single point. The tap lands about a quarter mile away, near Broadway. Watch for: does a quarter mile feel like it should still be nearly perfect? Only Bullseye treats it as perfect.' },
+  { title: 'Inside a town, right at its edge', loc: 'nolensville', tap: () => lerp(byId.nolensville.polygon[0], Scoring.centroid(byId.nolensville.polygon), 0.08),
+    desc: 'Nolensville is an area. The tap is just inside the town line, far from its center. Watch for: the Edge rule gives a perfect score, while the Center rule marks it down. Is "anywhere in town counts" too generous for big towns?' },
+  { title: 'Just outside a small lake', loc: 'radnor', tap: () => lerp(Scoring.centroid(byId.radnor.polygon), byId.radnor.polygon[0], 2.2),
+    desc: 'Radnor Lake is small. The tap lands a few hundred feet past the shoreline. Watch for: with a small area the two rules nearly agree, so the choice mostly matters for big areas.' },
+  { title: 'Right town, wrong spot', loc: 'crockett', tap: () => [-86.7828, 36.0331],
+    desc: 'Crockett Park is in Brentwood. The tap lands near the middle of Brentwood, about 3–4 miles off. Watch for: how many points should "right town, wrong part" earn? The curves disagree the most here.' },
+  { title: 'Wild miss across the Play Area', loc: 'nippers', tap: () => [-86.3903, 35.8456],
+    desc: 'Nippers Corner (Hard). The tap lands in Murfreesboro, about 25 miles away. Watch for: every curve gives about 0 here. Should a total miss still earn a few points, so a bad day isn\'t all red?' },
+];
+let walkIdx = 0;
+function showWalk(i) {
+  walkIdx = i; const w = WALKS[i];
+  document.getElementById('walkTabs').innerHTML = WALKS.map((x, j) => `<button class="act ${j === i ? 'primary' : ''}" data-w="${j}">${j + 1}</button>`).join('');
+  document.getElementById('walkDesc').innerHTML = `<b>${w.title}.</b> ${w.desc}`;
+  document.getElementById('walkSteps').innerHTML =
+    `<button class="act" id="ws1">1. Set the Location to ${byId[w.loc].name}</button><button class="act" id="ws2" disabled>2. Make the tap</button>`;
+  document.getElementById('walkResult').innerHTML = '<span class="muted">Press the steps in order.</span>';
+  clearMap(); resetView();
+  document.getElementById('ws1').onclick = () => { document.getElementById('ws1').disabled = true; document.getElementById('ws2').disabled = false; document.getElementById('walkResult').innerHTML = `Location set: <b>${byId[w.loc].name}</b>. The answer is hidden.`; };
+  document.getElementById('ws2').onclick = () => {
+    document.getElementById('ws2').disabled = true;
+    const tap = w.tap(), c = comparison(byId[w.loc], tap);
+    const r = document.getElementById('walkResult'); r.innerHTML = c.html; r.classList.add('changed'); setTimeout(() => r.classList.remove('changed'), 900);
+    drawReveal(byId[w.loc], tap, c.to);
+  };
+}
+document.getElementById('walkTabs').onclick = e => { if (e.target.dataset.w) showWalk(+e.target.dataset.w); };
+
+// ----- Sample Daily Challenge -----
+const DAILY = ['ryman', 'centennial', 'radnor', 'nolensville', 'nippers'];
+const dCurve = document.getElementById('dCurve');
+dCurve.innerHTML = Object.entries(Scoring.CURVES).map(([id, c]) => `<option value="${id}">${c.label}</option>`).join('');
+dCurve.value = 'bullseye';
+let daily = null;
+const dp = document.getElementById('dailyPanel');
+document.getElementById('dStart').onclick = () => {
+  daily = { round: 0, rounds: [], curve: dCurve.value, rule: document.getElementById('dRule').value, hard: document.getElementById('dHard').checked, awaiting: true };
+  clearMap(); resetView(); renderDaily();
+};
+function renderDaily() {
+  const d = daily;
+  if (d.round >= DAILY.length) {
+    const total = d.rounds.reduce((s, r) => s + r.weighted, 0), max = d.hard ? 550 : 500;
+    dp.innerHTML = `<div class="big">${total} / ${max}</div><p class="muted">${Scoring.CURVES[d.curve].label} · ${d.rule === 'edge' ? 'Edge rule' : 'Center rule'}${d.hard ? ' · Hard ×1.5' : ''}</p>` +
+      `<table>${d.rounds.map(r => `<tr><td>${byId[r.id].name}</td><td class="n">${fmtMi(r.miles)}</td><td class="n">${Scoring.emoji(r.points)} ${r.weighted}</td></tr>`).join('')}</table>` +
+      `<h3 style="margin-top:12px">Share Text options</h3>` +
+      ['emoji', 'numbers', 'both'].map(f => { const t = Scoring.shareText(f, 1, d.rounds.map(r => ({ points: r.points })), total, max);
+        return `<pre class="share">${t}</pre><button class="act" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">Copy</button>`; }).join('');
+    return;
+  }
+  const loc = byId[DAILY[d.round]];
+  if (d.awaiting) {
+    dp.innerHTML = `<p class="muted">Round ${d.round + 1} of 5 · ${loc.difficulty}</p><div class="big">${loc.name}</div><p>${loc.kind}. Tap the map.</p>`;
+  } else {
+    const r = d.rounds[d.round];
+    dp.innerHTML = `<p class="muted">Round ${d.round + 1} of 5 · Reveal</p><div class="big">${Scoring.emoji(r.points)} ${r.weighted} pts</div>` +
+      `<p>${loc.name} was <b>${r.miles === 0 ? 'hit: you tapped inside it' : fmtMi(r.miles) + ' away'}</b>.</p>` +
+      `<p class="muted">Fun Fact: <i>(placeholder)</i></p><button class="act primary" id="dNext">${d.round === 4 ? 'See results' : 'Next Location'}</button>`;
+    document.getElementById('dNext').onclick = () => { d.round++; d.awaiting = true; clearMap(); resetView(); renderDaily(); };
+  }
+}
+
+// ----- Tuning -----
+const sliders = { pLin: ['linZero', 'vLin'], pExp: ['expK', 'vExp'], pBr: ['bullR', 'vBr'], pBk: ['bullK', 'vBk'] };
+function renderRef() {
+  const ds = [0, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10, 15, 25, 40];
+  document.getElementById('refTable').innerHTML = `<table><tr><th>Miles off</th>${Object.values(Scoring.CURVES).map(c => `<th class="n">${c.label}</th>`).join('')}</tr>` +
+    ds.map(d => `<tr><td>${d}</td>${Object.keys(Scoring.CURVES).map(id => { const p = Scoring.points(d, id, params); return `<td class="n">${Scoring.emoji(p)} ${p}</td>`; }).join('')}</tr>`).join('') + '</table>';
+}
+for (const [sid, [key, vid]] of Object.entries(sliders)) {
+  const s = document.getElementById(sid); s.value = params[key]; document.getElementById(vid).textContent = params[key];
+  s.oninput = () => { params[key] = +s.value; document.getElementById(vid).textContent = s.value; renderRef(); if (freeTap) renderFree(); };
+}
+renderRef();
+
+// ----- Map taps -----
+map.on('click', e => {
+  const tap = [e.lngLat.lng, e.lngLat.lat];
+  if (mode === 'free') { freeTap = tap; renderFree(); }
+  else if (mode === 'daily' && daily && daily.awaiting && daily.round < DAILY.length) {
+    const loc = byId[DAILY[daily.round]], m = Scoring.measure(tap, loc, daily.rule);
+    const points = Scoring.points(m.miles, daily.curve, params);
+    const weighted = daily.hard && loc.difficulty === 'Hard' ? Math.round(points * 1.5) : points;
+    daily.rounds.push({ id: loc.id, miles: m.miles, points, weighted }); daily.awaiting = false;
+    drawReveal(loc, tap, m.to); renderDaily();
+  }
+});
+</script>
+</body>
+</html>
